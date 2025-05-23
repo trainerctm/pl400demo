@@ -1,0 +1,94 @@
+name: Dataverse Solution Deployment
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  export-solution:
+    runs-on: ubuntu-latest
+    env:
+      SOLUTION_UNIQUE_NAME: ${{ secrets.SOLUTION_UNIQUE_NAME }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install Power Platform CLI
+        run: |
+          dotnet tool install --global Microsoft.PowerApps.CLI.Tool
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Authenticate with Dataverse (Dev)
+        env:
+          CLIENT_ID:     ${{ secrets.DATAVERSE_CLIENT_ID }}
+          TENANT_ID:     ${{ secrets.DATAVERSE_TENANT_ID }}
+          CLIENT_SECRET: ${{ secrets.DATAVERSE_CLIENT_SECRET }}
+          DATAVERSE_URL: ${{ secrets.DATAVERSE_DEV_URL }}
+        run: |
+          pac auth create \
+            --name DevProfile \
+            --applicationId "$CLIENT_ID" \
+            --clientSecret "$CLIENT_SECRET" \
+            --tenant "$TENANT_ID" \
+            --environment "$DATAVERSE_URL" \
+            --accept-cleartext-caching
+
+      - name: Export Solution from Dev
+        run: |
+          pac solution export \
+            --name "$SOLUTION_UNIQUE_NAME" \
+            --path exported_solution.zip
+
+      - name: Upload Solution Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exported-solution
+          path: exported_solution.zip
+
+      - name: Clear Auth Profile (Dev)
+        run: pac auth clear
+
+  import-solution:
+    needs: export-solution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Download Solution Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: exported-solution
+
+      - name: Install Power Platform CLI
+        run: |
+          dotnet tool install --global Microsoft.PowerApps.CLI.Tool
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Authenticate with Dataverse (Test)
+        env:
+          CLIENT_ID:     ${{ secrets.DATAVERSE_CLIENT_ID }}
+          TENANT_ID:     ${{ secrets.DATAVERSE_TENANT_ID }}
+          CLIENT_SECRET: ${{ secrets.DATAVERSE_CLIENT_SECRET }}
+          DATAVERSE_URL: ${{ secrets.DATAVERSE_TEST_URL }}
+        run: |
+          pac auth create \
+            --name TestProfile \
+            --applicationId "$CLIENT_ID" \
+            --clientSecret "$CLIENT_SECRET" \
+            --tenant "$TENANT_ID" \
+            --environment "$DATAVERSE_URL" \
+            --accept-cleartext-caching
+
+      - name: Import Solution into Test
+        run: |
+          pac solution import \
+            --path exported_solution.zip \
+            --force-overwrite \
+            --activate-plugins \
+            --publish-changes
+
+      - name: Clear Auth Profile (Test)
+        run: pac auth clear
